@@ -11,6 +11,7 @@
 // WiringPi library version
 // gcc -o kedei_lcd_v50_pi_wiringpi kedei_lcd_v50_pi_wiringpi.c -lwiringPi
 // sudo ./kedei_lcd_v50_pi_wiringpi
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -34,7 +35,6 @@ uint8_t lcd_rotations[4] = {
 };
 
 volatile uint8_t color;
-volatile uint8_t lcd_rotation;
 volatile uint16_t lcd_h;
 volatile uint16_t lcd_w;
 
@@ -67,12 +67,7 @@ int lcd_setup_spi(uint32_t spi_speed)
 	r = wiringPiSPISetupMode(SPI_CHANNEL, SPI_PORT, spi_speed, 0);
 	if (r < 0)
 		return -1;
-#if 0 // Sadly we won't support touch
-	r = wiringPiSPISetup(TOUCH_CS, 1000000);
-	if(r<0)
-        return -1;
-#endif
-	wiringPiSetup();
+
 	pinMode(OPI_GPIOWPI_CS, OUTPUT);
 	digitalWrite(OPI_GPIOWPI_CS, HIGH);
 	return 0;
@@ -292,11 +287,26 @@ void lcd_init(void)
 
 void lcd_setframe(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
+	/* If we try to draw outside the limits, set drawing dimensions
+	   as the maximum available by the desired coordinates */
+	if ((x + w) > lcd_w)
+	{
+		w = lcd_w - x;
+	}
+	if ((y + h) > lcd_h)
+	{
+		h = lcd_h - y;
+	}
+	
+	//Start from top left corner
+	y = lcd_h - y - h;
+
 	lcd_cmd(0x2A);
 	lcd_data(x >> 8);
 	lcd_data(x & 0xFF);
 	lcd_data(((w + x) - 1) >> 8);
 	lcd_data(((w + x) - 1) & 0xFF);
+
 	lcd_cmd(0x2B);
 	lcd_data(y >> 8);
 	lcd_data(y & 0xFF);
@@ -311,7 +321,10 @@ void lcd_fillframe(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t col)
 {
 	int span = h * w;
 	int q;
+	
+	// First we set the position and area we want to draw on
 	lcd_setframe(x, y, w, h);
+
 	for (q = 0; q < span; q++)
 	{
 		lcd_color(col);
@@ -351,7 +364,10 @@ void lcd_img(char *fname, uint16_t x, uint16_t y)
 	if (f != NULL)
 	{
 		fseek(f, 0L, SEEK_SET);
-		fread(buf, 30, 1, f);
+		if(!fread(buf, 30, 1, f)){
+			printf("error!\n");
+			exit(-1);
+		}
 
 		isize = buf[2] + (buf[3] << 8) + (buf[4] << 16) + (buf[5] << 24);
 		ioffset = buf[10] + (buf[11] << 8) + (buf[12] << 16) + (buf[13] << 24);
@@ -373,7 +389,7 @@ void lcd_img(char *fname, uint16_t x, uint16_t y)
 			rowbytes += 4 - d;
 		}
 
-		for (p = iheight - 1; p > 0; p--)
+		for (p = 0; p < iheight; p++)
 		{
 			// p = relative page address (y)
 			fpos = ioffset + (p * rowbytes);
@@ -381,7 +397,10 @@ void lcd_img(char *fname, uint16_t x, uint16_t y)
 			for (c = 0; c < iwidth; c++)
 			{
 				// c = relative column address (x)
-				fread(buf, 3, 1, f);
+				if(!fread(buf, 3, 1, f)){
+					printf("error!\n");
+					exit(-1);
+				}
 
 				// B buf[0]
 				// G buf[1]
@@ -395,64 +414,18 @@ void lcd_img(char *fname, uint16_t x, uint16_t y)
 	}
 }
 
-void loop()
-{
-	// Update rotation
-	lcd_setrotation(lcd_rotation);
-
-	// Fill entire screen with new color
-	lcd_fillframe(0, 0, lcd_w, lcd_h, colors[color]);
-
-	// Make a color+1 box, 5 pixels from the top-left corner, 20 pixels high, 95 (100-5) pixels from right border.
-	lcd_fillframe(5, 5, lcd_w - 100, 20, colors[(color + 1) & 0xF]);
-
-	// increment color
-	color++;
-	// if color is overflowed, reset to 0
-	if (color == 16)
-	{
-		color = 0;
-	}
-
-	// increment rotation
-	lcd_rotation++;
-
-	// if rotation is overflowed, reset to 0
-	if (lcd_rotation == 4)
-		lcd_rotation = 0;
-
-	delay(500);
-}
-
 int main(int argc, char *argv[])
 {
-	if (lcd_setup_spi(24000000))
-	{
+	if (lcd_setup_spi(24000000)) { //max 24000000
 		printf("error!\n");
 		exit(-1);
 	}
 
 	lcd_init();
 
-	lcd_fill(0x0); // black out the screen.
-	// 24bit Bitmap only
-	lcd_img("kedei_lcd_v50_pi.bmp", 50, 5);
-	delay(500);
-	lcd_fillRGB(0xFF, 0x00, 0x00);
-	lcd_fillRGB(0x00, 0xFF, 0x00);
-	lcd_fillRGB(0x00, 0x00, 0xFF);
-	lcd_fillRGB(0x00, 0x00, 0x00);
+	lcd_fill(0x0);
 
-	delay(500);
-
-	// Demo
-	color = 0;
-	lcd_rotation = 0;
-	for (uint8_t i = 0; i < 3; ++i)
-		loop();
-
-	// 24bit Bitmap only
-	lcd_img("kedei_lcd_v50_pi.bmp", 50, 5);
+	lcd_img("outfile.bmp", 90, 50);
 
 	return 0;
 }
