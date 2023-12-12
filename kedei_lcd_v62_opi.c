@@ -15,7 +15,16 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+#define SPIDEV "/dev/spidev4.1"
+#ifdef SPIDEV
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <linux/spi/spidev.h>
+#include <unistd.h>
+#else
 #include <wiringPiSPI.h>
+#endif
 #include <wiringPi.h>
 
 // /dev/spidev4.1
@@ -37,6 +46,13 @@ uint8_t lcd_rotations[4] = {
 volatile uint8_t color;
 volatile uint16_t lcd_h;
 volatile uint16_t lcd_w;
+
+#ifdef SPIDEV
+volatile int spih;
+static const uint32_t mode = 0;
+static const uint8_t bits = 8;
+static const uint32_t speed = 24500000;
+#endif
 
 uint16_t colors[16] = {
 	0b0000000000000000, /* BLACK	000000 */
@@ -64,9 +80,27 @@ int lcd_setup_spi(uint32_t spi_speed)
 	if (r < 0)
 		return -1;
 
+#ifdef SPIDEV
+	spih = open(SPIDEV, O_WRONLY);
+	if (spih < 0)
+		return -1;
+
+	r = ioctl(spih, SPI_IOC_WR_MODE32, &mode);
+	if (r < 0)
+		return -1;
+
+	r = ioctl(spih, SPI_IOC_WR_BITS_PER_WORD, &bits);
+	if (r < 0)
+		return -1;
+
+	r = ioctl(spih, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
+	if (r < 0)
+		return -1;
+#else
 	r = wiringPiSPISetupMode(SPI_CHANNEL, SPI_PORT, spi_speed, 0);
 	if (r < 0)
 		return -1;
+#endif
 
 	pinMode(OPI_GPIOWPI_CS, OUTPUT);
 	digitalWrite(OPI_GPIOWPI_CS, HIGH);
@@ -76,8 +110,21 @@ int lcd_setup_spi(uint32_t spi_speed)
 int spi_transmit(int devsel, uint8_t *data, int len)
 {
 	int ret = 0;
+#ifdef SPIDEV
+	struct spi_ioc_transfer tr = {
+		.tx_buf = (unsigned long)data,
+		.rx_buf = (unsigned long)NULL,
+		.len = len,
+		.delay_usecs = 0,
+		.speed_hz = speed,
+		.bits_per_word = bits};
+#endif
 	digitalWrite(OPI_GPIOWPI_CS, HIGH);
+#ifdef SPIDEV
+	ret = ioctl(spih, SPI_IOC_MESSAGE(1), &tr);
+#else
 	ret = wiringPiSPIDataRW(devsel, (unsigned char *)data, len);
+#endif
 	digitalWrite(OPI_GPIOWPI_CS, LOW);
 	return ret;
 }
@@ -426,6 +473,10 @@ int main(int argc, char *argv[])
 	lcd_fill(0x0);
 
 	lcd_img("outfile.bmp", 90, 50);
+
+#ifdef SPIDEV
+	close(spih);
+#endif
 
 	return 0;
 }
